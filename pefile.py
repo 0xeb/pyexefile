@@ -13,12 +13,10 @@ PEs as well as malware, which often attempts to abuse the format way beyond its
 standard use. To the best of my knowledge most of the abuse is handled
 gracefully.
 
-Copyright (c) 2005-2016 Ero Carrera <ero.carrera@gmail.com>
+Copyright (c) 2005-2016 Ero Carrera <ero.carrera@gmail.com> . All rights reserved.
 
-All rights reserved.
+Forked and maintained separately by Elias Bachaalany <elias.bachaalany@gmail.com>
 
-For detailed copyright information see the file COPYING in the root of the
-distribution archive.
 """
 
 from __future__ import division
@@ -4379,6 +4377,13 @@ class PE(object):
         return hasattr(self, 'DIRECTORY_ENTRY_BASERELOC')
 
 
+    def has_tls_callbacks(self):
+        """Checks if the PE file has TLS Callbacks and they are properly parsed by this class"""
+        return (    hasattr(self, 'DIRECTORY_ENTRY_TLS')
+                and self.DIRECTORY_ENTRY_TLS
+                and self.DIRECTORY_ENTRY_TLS.struct)
+
+
     def print_info(self, encoding='utf-8'):
         """Print all the PE header information in a human readable from."""
         print(self.dump_info(), encoding=encoding)
@@ -4676,9 +4681,7 @@ class PE(object):
             dump.add_newline()
 
 
-        if ( hasattr(self, 'DIRECTORY_ENTRY_TLS') and
-             self.DIRECTORY_ENTRY_TLS and
-             self.DIRECTORY_ENTRY_TLS.struct ):
+        if self.has_tls_callbacks():
 
             dump.add_header('TLS')
             dump.add_lines(self.DIRECTORY_ENTRY_TLS.struct.dump())
