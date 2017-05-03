@@ -24,6 +24,7 @@ History
 05/03/2017 - Exposed IMAGE_DIRECTORY_ENTRY_* numerical constants
            - Lookup function names by ordinal is now an optional argument to the PE constructor
 		   - Counting the bytes in the mapped file is now optional
+           - Moved various local tables/lookups/dicts/sets initialization to PE._setup_tables()
 
 """
 
@@ -1769,6 +1770,19 @@ class PE(object):
         if fast_load is None:
             fast_load = globals()['fast_load']
 
+        self._setup_tables()
+
+        try:
+            self.__parse__(name, data, fast_load, skip_counter)
+        except:
+            self.close()
+            raise
+
+    def _setup_tables(self):
+        # If a PE file imports any of the following DLLs, it is assumed that it is a driver
+        self.system_DLLs = set(
+            ('ntoskrnl.exe', 'hal.dll', 'ndis.sys', 'bootvid.dll', 'kdcom.dll'))
+
         # Set up the image directory parsers callback table
         self.directory_parsing = (
             (IMAGE_DIRECTORY_ENTRY_IMPORT,        self.parse_import_directory),
@@ -1780,12 +1794,6 @@ class PE(object):
             (IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG,   self.parse_directory_load_config),
             (IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT,  self.parse_delay_import_directory),
             (IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT,  self.parse_directory_bound_imports) )
-
-        try:
-            self.__parse__(name, data, fast_load, skip_counter)
-        except:
-            self.close()
-            raise
 
 
     def close(self):
@@ -2904,7 +2912,6 @@ class PE(object):
         are available as its attributes.
         """
 
-        # OC Patch:
         if dirs is None:
             dirs = [rva]
 
@@ -4227,7 +4234,7 @@ class PE(object):
 
         resources_strings = list()
 
-        if hasattr(self, 'DIRECTORY_ENTRY_RESOURCE'):
+        if self.has_resources():
 
             for resource_type in self.DIRECTORY_ENTRY_RESOURCE.entries:
                 if hasattr(resource_type, 'directory'):
@@ -4415,8 +4422,17 @@ class PE(object):
         return self.dump_info()
 
 
+    def has_imports(self):
+        """Checks if the PE file has an import directory and it was parsed"""
+        return hasattr(self, 'DIRECTORY_ENTRY_IMPORT')
+
+    
+    def has_resources(self):
+        return hasattr(self, 'DIRECTORY_ENTRY_RESOURCE')
+
+
     def has_relocs(self):
-        """Checks if the PE file has relocation directory"""
+        """Checks if the PE file has relocation directory and it was parsed"""
         return hasattr(self, 'DIRECTORY_ENTRY_BASERELOC')
 
 
@@ -4589,7 +4605,7 @@ class PE(object):
 
             dump.add_newline()
 
-        if hasattr(self, 'DIRECTORY_ENTRY_IMPORT'):
+        if self.has_imports():
             dump.add_header('Imported symbols')
             for module in self.DIRECTORY_ENTRY_IMPORT:
                 dump.add_lines(module.struct.dump())
@@ -4662,7 +4678,7 @@ class PE(object):
                 dump.add_newline()
 
 
-        if hasattr(self, 'DIRECTORY_ENTRY_RESOURCE'):
+        if self.has_resources():
             dump.add_header('Resource directory')
 
             dump.add_lines(self.DIRECTORY_ENTRY_RESOURCE.struct.dump())
@@ -4874,7 +4890,7 @@ class PE(object):
                         export_dict['forwarder'] = export.forwarder
                 dump_dict['Exported symbols'].append(export_dict)
 
-        if hasattr(self, 'DIRECTORY_ENTRY_IMPORT'):
+        if self.has_imports():
             dump_dict['Imported symbols'] = list()
             for module in self.DIRECTORY_ENTRY_IMPORT:
                 import_list = list()
@@ -4932,7 +4948,7 @@ class PE(object):
                     module_list.append(symbol_dict)
 
 
-        if hasattr(self, 'DIRECTORY_ENTRY_RESOURCE'):
+        if self.has_resources():
             dump_dict['Resource directory'] = list()
             dump_dict['Resource directory'].append(self.DIRECTORY_ENTRY_RESOURCE.struct.dump_dict())
 
@@ -5451,22 +5467,19 @@ class PE(object):
         #    return True
 
         # If the import directory was not parsed (fast_load = True); do it now.
-        if not hasattr(self, 'DIRECTORY_ENTRY_IMPORT'):
-            self.parse_data_directories(directories=[
-                DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_IMPORT']])
+        if not self.has_imports():
+            self.parse_data_directories(IMAGE_DIRECTORY_ENTRY_IMPORT)
 
         # If there's still no import directory (the PE doesn't have one or it's
         # malformed), give up.
-        if not hasattr(self, 'DIRECTORY_ENTRY_IMPORT'):
+        if not self.has_imports():
             return False
 
         # self.DIRECTORY_ENTRY_IMPORT will now exist, although it may be empty.
         # If it imports from "ntoskrnl.exe" or other kernel components it should
         # be a driver
         #
-        system_DLLs = set(
-            ('ntoskrnl.exe', 'hal.dll', 'ndis.sys', 'bootvid.dll', 'kdcom.dll'))
-        if system_DLLs.intersection(
+        if self.system_DLLs.intersection(
                 [imp.dll.lower() for imp in self.DIRECTORY_ENTRY_IMPORT]):
             return True
 
