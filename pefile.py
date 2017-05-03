@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """pefile, Portable Executable reader module
 
+Copyright (c) 2005-2016 Ero Carrera <ero.carrera@gmail.com>. All rights reserved.
+
 All the PE file basic structures are available with their default names as
 attributes of the instance returned.
 
@@ -11,10 +13,9 @@ names, to differentiate them from the upper case basic structure names.
 pefile has been tested against many edge cases such as corrupted and malformed
 PEs as well as malware, which often attempts to abuse the format way beyond its
 standard use. To the best of my knowledge most of the abuse is handled
-gracefully.
+gracefully. -- Ero Carrera
 
-Copyright (c) 2005-2016 Ero Carrera <ero.carrera@gmail.com> . All rights reserved.
-
+--------------------------------------------------------------------------------------------------------------------
 On 05/02/2017, I, Elias Bachaalany <elias.bachaalany@gmail.com>, decided to fork and independently maintain this library.
 The purpose of this fork is to make the library faster, cleaner and with less redundant code.
 
@@ -26,6 +27,12 @@ History
 		   - Counting the bytes in the mapped file is now optional
            - Added PE.has_imports(), PE.has_resources()
            - Moved various local tables/lookups/dicts/sets initialization to PE._setup_tables()
+           - Added PE.parse_exports(), PE.parse_imports()
+		   - Added PE.parse_tls_callbacks() that also resolves the callback addresses
+           - Added is_pe_plus_type() and is_pe_type()
+           - Added ImageBase()
+           - Added get_ptr_at_rva() to retrieve a pointer at a given RVA (with automatic size detection)
+
 
 """
 
@@ -38,7 +45,7 @@ from builtins import object
 from builtins import range
 from builtins import str
 from builtins import zip
-
+from collections import Counter
 
 import os
 import struct
@@ -57,6 +64,9 @@ from hashlib import sha512
 from hashlib import md5
 
 PY3 = sys.version_info > (3,)
+
+# Compute printable bytes lookup table
+_printable_bytes = [ord(i) for i in string.printable if i not in string.whitespace]
 
 def count_zeroes(data):
     try:
@@ -936,8 +946,6 @@ class Structure(object):
 
         dump.append('[{0}]'.format(self.name))
 
-        printable_bytes = [ord(i) for i in string.printable if i not in string.whitespace]
-
         # Refer to the __set_format__ method for an explanation
         # of the following construct.
         for keys in self.__keys__:
@@ -954,7 +962,7 @@ class Structure(object):
                 else:
                     val_str = bytearray(val)
                     val_str = ''.join(
-                            [chr(i) if (i in printable_bytes) else
+                            [chr(i) if (i in _printable_bytes) else
                              '\\x{0:02x}'.format(i) for i in val_str.rstrip(b'\x00')])
 
                 dump.append('0x%-8X 0x%-3X %-30s %s' % (
@@ -962,6 +970,7 @@ class Structure(object):
                     self.__field_offsets__[key], key+':', val_str))
 
         return dump
+
 
     def dump_dict(self):
         """Returns a dictionary representation of the structure."""
@@ -1033,6 +1042,7 @@ class SectionStructure(Structure):
         #
         if end > self.PointerToRawData + self.SizeOfRawData:
             end = self.PointerToRawData + self.SizeOfRawData
+
         return self.pe.__data__[offset:end]
 
 
@@ -1681,9 +1691,9 @@ class PE(object):
         'I,SizeOfZeroFill', 'I,Characteristics' ) )
 
     __IMAGE_TLS_DIRECTORY64_format__ = ('IMAGE_TLS_DIRECTORY',
-        ('Q,StartAddressOfRawData', 'Q,EndAddressOfRawData',
-        'Q,AddressOfIndex', 'Q,AddressOfCallBacks',
-        'I,SizeOfZeroFill', 'I,Characteristics' ) )
+            ('Q,StartAddressOfRawData', 'Q,EndAddressOfRawData',
+            'Q,AddressOfIndex', 'Q,AddressOfCallBacks',
+            'I,SizeOfZeroFill', 'I,Characteristics' ) )
 
     __IMAGE_LOAD_CONFIG_DIRECTORY_format__ = ('IMAGE_LOAD_CONFIG_DIRECTORY',
         ('I,Size',
@@ -1779,6 +1789,7 @@ class PE(object):
             self.close()
             raise
 
+
     def _setup_tables(self):
         # If a PE file imports any of the following DLLs, it is assumed that it is a driver
         self.system_DLLs = set(
@@ -1861,7 +1872,6 @@ class PE(object):
             self.__from_file = False
 
         if not skip_counter:
-            from collections import Counter
             for byte, byte_count in Counter(bytearray(self.__data__)).items():
                 # Only report the cases where a byte makes up for more than 50% (if
                 # zero) or 15% (if non-zero) of the file's contents. There are
@@ -1976,9 +1986,7 @@ class PE(object):
         if self.OPTIONAL_HEADER is not None:
 
             if self.OPTIONAL_HEADER.Magic == OPTIONAL_HEADER_MAGIC_PE:
-
                 self.PE_TYPE = OPTIONAL_HEADER_MAGIC_PE
-
             elif self.OPTIONAL_HEADER.Magic == OPTIONAL_HEADER_MAGIC_PE_PLUS:
 
                 self.PE_TYPE = OPTIONAL_HEADER_MAGIC_PE_PLUS
@@ -2417,6 +2425,65 @@ class PE(object):
 
 
 
+    def parse_exports(self, forwarded_exports_only=False):
+        """Parse the exports
+
+        Access the import table after a successful parse through the PE.DIRECTORY_ENTRY_EXPORT attribute.
+
+        Returns True or False.
+        """
+        directories = [IMAGE_DIRECTORY_ENTRY_EXPORT]
+        self.parse_data_directories(
+                directories = directories, 
+                forwarded_exports_only=forwarded_exports_only)
+
+        return len(directories) == 0
+
+
+    def parse_tls_callbacks(self):
+        """Parse the TLS callbacks
+        Returns None or the regular IMAGE_TLS_DIRECTORY structure + A synthetic "Callbacks" array member with VAs to the callbacks
+        """
+        directories = [IMAGE_DIRECTORY_ENTRY_TLS]
+        self.parse_data_directories(directories = directories)
+
+        if len(directories) != 0 or (self.DIRECTORY_ENTRY_TLS.struct.AddressOfCallBacks == 0):
+            return None
+
+       
+        cb_rva = self.DIRECTORY_ENTRY_TLS.struct.AddressOfCallBacks - self.ImageBase()
+        step = 8 if self.is_pe_plus_type() else 4
+
+        Callbacks = []
+        while True:
+            cb = self.get_ptr_at_rva(cb_rva)
+            cb_rva += step
+
+            if not cb:
+                break
+
+            Callbacks.append(cb)
+
+        # Add a synthetic Callbacks array
+        self.DIRECTORY_ENTRY_TLS.struct.Callbacks = Callbacks
+        return self.DIRECTORY_ENTRY_TLS.struct
+
+
+    def parse_imports(self, dllnames_only=False):
+        """Parse the imports
+
+        Access the import table after a successful parse through the PE.DIRECTORY_ENTRY_IMPORT attribute.
+
+        Returns True or False.
+        """
+        directories = [IMAGE_DIRECTORY_ENTRY_IMPORT]
+        self.parse_data_directories(
+                directories = directories,
+                import_dllnames_only=dllnames_only)
+
+        return len(directories) == 0
+
+
     def parse_data_directories(self, 
                                directories=None,
                                forwarded_exports_only=False,
@@ -2462,6 +2529,7 @@ class PE(object):
             # Only process all the directories if no individual ones have
             # been chosen
             #
+            value = None
             if (directories is None) or (directory_index in directories):
 
                 if dir_entry.VirtualAddress:
@@ -2486,7 +2554,9 @@ class PE(object):
                         # Attribute name is: the directory name string from its index, past the "IMAGE_" prefix.
                         setattr(self, DIRECTORY_ENTRY[directory_index][6:], value)
 
-            if (directories is not None) and isinstance(directories, list) and (entry[0] in directories):
+            # If the directory has been successfully parsed, then remove it from the entry
+            # This lets the caller which directories have been parsed correctly
+            if value is not None:
                 directories.remove(directory_index)
 
 
@@ -2600,6 +2670,14 @@ class PE(object):
 
         return bound_imports
 
+    
+    def is_pe_plus_type(self):
+        return self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE_PLUS
+
+    
+    def is_pe_type(self):
+        return self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE
+
 
     def parse_directory_tls(self, rva, size):
         """
@@ -2611,7 +2689,7 @@ class PE(object):
         # is incorrect.
         format = self.__IMAGE_TLS_DIRECTORY_format__
 
-        if self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE_PLUS:
+        if self.is_pe_plus_type():
             format = self.__IMAGE_TLS_DIRECTORY64_format__
 
         try:
@@ -2627,16 +2705,16 @@ class PE(object):
         if not tls_struct:
             return None
 
-        return TlsData( struct = tls_struct )
+        return TlsData(struct = tls_struct)
 
 
     def parse_directory_load_config(self, rva, size):
         """"""
 
-        if self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE:
+        if self.is_pe_type():
             format = self.__IMAGE_LOAD_CONFIG_DIRECTORY_format__
 
-        elif self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE_PLUS:
+        elif self.is_pe_plus_type():
             format = self.__IMAGE_LOAD_CONFIG_DIRECTORY64_format__
 
         try:
@@ -3725,7 +3803,7 @@ class PE(object):
 
             import_data = []
             try:
-                import_data =  self.parse_imports(
+                import_data =  self._parse_imports(
                     import_desc.pINT,
                     import_desc.pIAT,
                     None,
@@ -3810,8 +3888,10 @@ class PE(object):
             try:
                 # If the RVA is invalid all would blow up. Some EXEs seem to be
                 # specially nasty and have an invalid RVA.
-                data = self.get_data(rva, Structure(
+                data = self.get_data(
+                        rva, Structure(
                         self.__IMAGE_IMPORT_DESCRIPTOR_format__).sizeof() )
+
             except PEFormatError as e:
                 self.__warnings.append(
                     'Error parsing the import directory at RVA: 0x%x' % ( rva ) )
@@ -3838,7 +3918,7 @@ class PE(object):
             import_data = []
             if not dllnames_only:
                 try:
-                    import_data =  self.parse_imports(
+                    import_data =  self._parse_imports(
                                             import_desc.OriginalFirstThunk,
                                             import_desc.FirstThunk,
                                             import_desc.ForwarderChain,
@@ -3896,7 +3976,7 @@ class PE(object):
 
 
 
-    def parse_imports(
+    def _parse_imports(
             self, original_first_thunk, first_thunk,
             forwarder_chain, max_length=None):
         """Parse the imported symbols.
@@ -3945,9 +4025,9 @@ class PE(object):
 
         imp_offset = 4
         address_mask = 0x7fffffff
-        if self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE:
+        if self.is_pe_type():
             ordinal_flag = IMAGE_ORDINAL_FLAG
-        elif self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE_PLUS:
+        elif self.is_pe_plus_type():
             ordinal_flag = IMAGE_ORDINAL_FLAG64
             imp_offset = 8
             address_mask = 0x7fffffffffffffff
@@ -4056,10 +4136,10 @@ class PE(object):
         # We need the ordinal flag for a simple heuristic
         # we're implementing within the loop
         #
-        if self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE:
+        if self.is_pe_type():
             ordinal_flag = IMAGE_ORDINAL_FLAG
             format = self.__IMAGE_THUNK_DATA_format__
-        elif self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE_PLUS:
+        elif self.is_pe_plus_type():
             ordinal_flag = IMAGE_ORDINAL_FLAG64
             format = self.__IMAGE_THUNK_DATA64_format__
         else:
@@ -4421,6 +4501,10 @@ class PE(object):
 
     def __str__(self):
         return self.dump_info()
+
+
+    def ImageBase(self):
+        return self.OPTIONAL_HEADER.ImageBase
 
 
     def has_imports(self):
@@ -5218,6 +5302,18 @@ class PE(object):
         return self.set_bytes_at_offset(offset, self.get_data_from_qword(qword))
 
 
+    def get_ptr_at_rva(self, rva):
+        """Return a double-word or a quad-word value at the given RVA depending on whether the PE file is PEPLUS or not.
+
+        Returns None if the value can't be read, i.e. the RVA can't be mapped
+        to a file offset.
+        """
+
+        try:
+            return self.get_qword_at_rva(rva) if self.is_pe_plus_type() else self.get_dword_at_rva(rva)
+        except PEFormatError:
+            return None
+
 
     ##
     # Set bytes
@@ -5469,7 +5565,7 @@ class PE(object):
 
         # If the import directory was not parsed (fast_load = True); do it now.
         if not self.has_imports():
-            self.parse_data_directories(IMAGE_DIRECTORY_ENTRY_IMPORT)
+            self.parse_imports()
 
         # If there's still no import directory (the PE doesn't have one or it's
         # malformed), give up.
