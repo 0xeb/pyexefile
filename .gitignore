@@ -1,0 +1,6 @@
+*.bak
+*.pyc
+*.pyo
+*.suo
+t1.py
+test1.py
