@@ -15,7 +15,15 @@ gracefully.
 
 Copyright (c) 2005-2016 Ero Carrera <ero.carrera@gmail.com> . All rights reserved.
 
-Forked and maintained separately by Elias Bachaalany <elias.bachaalany@gmail.com>
+On 05/02/2017, I, Elias Bachaalany <elias.bachaalany@gmail.com>, decided to fork and independently maintain this library.
+The purpose of this fork is to make the library faster, cleaner and with less redundant code.
+
+History
+----------
+05/02/2017 - Added PE.has_tls_callbacks() and PE.has_relocs()
+05/03/2017 - Exposed IMAGE_DIRECTORY_ENTRY_* numerical constants
+           - Lookup function names by ordinal is now an optional argument to the PE constructor
+		   - Counting the bytes in the mapped file is now optional
 
 """
 
@@ -29,9 +37,6 @@ from builtins import range
 from builtins import str
 from builtins import zip
 
-__author__ = 'Ero Carrera'
-__version__ = '2016.3.28'
-__contact__ = 'ero.carrera@gmail.com'
 
 import os
 import struct
@@ -43,9 +48,7 @@ import re
 import string
 import array
 import mmap
-import ordlookup
 
-from collections import Counter
 from hashlib import sha1
 from hashlib import sha256
 from hashlib import sha512
@@ -71,7 +74,7 @@ MAX_STRING_LENGTH = 0x100000 # 2^20
 
 # Limit maximum length for specific string types separately
 MAX_IMPORT_NAME_LENGTH = 0x200
-MAX_DLL_LENGTH = 0x200
+MAX_DLL_LENGTH         = 0x200
 MAX_SYMBOL_NAME_LENGTH = 0x200
 
 IMAGE_DOS_SIGNATURE             = 0x5A4D
@@ -89,29 +92,46 @@ OPTIONAL_HEADER_MAGIC_PE        = 0x10b
 OPTIONAL_HEADER_MAGIC_PE_PLUS   = 0x20b
 
 
+IMAGE_DIRECTORY_ENTRY_EXPORT         = 0   # Export Directory
+IMAGE_DIRECTORY_ENTRY_IMPORT         = 1   # Import Directory
+IMAGE_DIRECTORY_ENTRY_RESOURCE       = 2   # Resource Directory
+IMAGE_DIRECTORY_ENTRY_EXCEPTION      = 3   # Exception Directory
+IMAGE_DIRECTORY_ENTRY_SECURITY       = 4   # Security Directory
+IMAGE_DIRECTORY_ENTRY_BASERELOC      = 5   # Base Relocation Table
+IMAGE_DIRECTORY_ENTRY_DEBUG          = 6   # Debug Directory
+IMAGE_DIRECTORY_ENTRY_COPYRIGHT      = 7   # (X86 usage)
+IMAGE_DIRECTORY_ENTRY_ARCHITECTURE   = 7   # Architecture Specific Data
+IMAGE_DIRECTORY_ENTRY_GLOBALPTR      = 8   # RVA of GP
+IMAGE_DIRECTORY_ENTRY_TLS            = 9   # TLS Directory
+IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG    = 10  # Load Configuration Directory
+IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT   = 11  # Bound Import Directory in headers
+IMAGE_DIRECTORY_ENTRY_IAT            = 12  # Import Address Table
+IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT   = 13  # Delay Load Import Descriptors
+IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR = 14  # COM Runtime descriptor
+
 directory_entry_types = [
-    ('IMAGE_DIRECTORY_ENTRY_EXPORT',        0),
-    ('IMAGE_DIRECTORY_ENTRY_IMPORT',        1),
-    ('IMAGE_DIRECTORY_ENTRY_RESOURCE',      2),
-    ('IMAGE_DIRECTORY_ENTRY_EXCEPTION',     3),
-    ('IMAGE_DIRECTORY_ENTRY_SECURITY',      4),
-    ('IMAGE_DIRECTORY_ENTRY_BASERELOC',     5),
-    ('IMAGE_DIRECTORY_ENTRY_DEBUG',         6),
+    ('IMAGE_DIRECTORY_ENTRY_EXPORT',        IMAGE_DIRECTORY_ENTRY_EXPORT),
+    ('IMAGE_DIRECTORY_ENTRY_IMPORT',        IMAGE_DIRECTORY_ENTRY_IMPORT),
+    ('IMAGE_DIRECTORY_ENTRY_RESOURCE',      IMAGE_DIRECTORY_ENTRY_RESOURCE),
+    ('IMAGE_DIRECTORY_ENTRY_EXCEPTION',     IMAGE_DIRECTORY_ENTRY_EXCEPTION),
+    ('IMAGE_DIRECTORY_ENTRY_SECURITY',      IMAGE_DIRECTORY_ENTRY_SECURITY),
+    ('IMAGE_DIRECTORY_ENTRY_BASERELOC',     IMAGE_DIRECTORY_ENTRY_BASERELOC),
+    ('IMAGE_DIRECTORY_ENTRY_DEBUG',         IMAGE_DIRECTORY_ENTRY_DEBUG),
 
     # Architecture on non-x86 platforms
-    ('IMAGE_DIRECTORY_ENTRY_COPYRIGHT',     7),
+    ('IMAGE_DIRECTORY_ENTRY_COPYRIGHT',     IMAGE_DIRECTORY_ENTRY_COPYRIGHT),
 
-    ('IMAGE_DIRECTORY_ENTRY_GLOBALPTR',     8),
-    ('IMAGE_DIRECTORY_ENTRY_TLS',           9),
-    ('IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG',   10),
-    ('IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT',  11),
-    ('IMAGE_DIRECTORY_ENTRY_IAT',           12),
-    ('IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT',  13),
-    ('IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR',14),
-    ('IMAGE_DIRECTORY_ENTRY_RESERVED',      15) ]
+    ('IMAGE_DIRECTORY_ENTRY_GLOBALPTR',     IMAGE_DIRECTORY_ENTRY_GLOBALPTR),
+    ('IMAGE_DIRECTORY_ENTRY_TLS',           IMAGE_DIRECTORY_ENTRY_TLS),
+    ('IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG',   IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG),
+    ('IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT',  IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT),
+    ('IMAGE_DIRECTORY_ENTRY_IAT',           IMAGE_DIRECTORY_ENTRY_IAT),
+    ('IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT',  IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT),
+    ('IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR',IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR),
+    ('IMAGE_DIRECTORY_ENTRY_RESERVED',      15) 
+]
 
-DIRECTORY_ENTRY = dict(
-    [(e[1], e[0]) for e in directory_entry_types]+directory_entry_types)
+DIRECTORY_ENTRY = dict([(e[1], e[0]) for e in directory_entry_types] + directory_entry_types)
 
 image_characteristics = [
     ('IMAGE_FILE_RELOCS_STRIPPED',          0x0001),
@@ -131,8 +151,7 @@ image_characteristics = [
     ('IMAGE_FILE_UP_SYSTEM_ONLY',           0x4000),
     ('IMAGE_FILE_BYTES_REVERSED_HI',        0x8000) ]
 
-IMAGE_CHARACTERISTICS = dict([(e[1], e[0]) for e in
-    image_characteristics]+image_characteristics)
+IMAGE_CHARACTERISTICS = dict([(e[1], e[0]) for e in image_characteristics] + image_characteristics)
 
 
 section_characteristics = [
@@ -188,8 +207,7 @@ section_characteristics = [
     ('IMAGE_SCN_MEM_READ',                  0x40000000),
     ('IMAGE_SCN_MEM_WRITE',                 0x80000000) ]
 
-SECTION_CHARACTERISTICS = dict([(e[1], e[0]) for e in
-    section_characteristics]+section_characteristics)
+SECTION_CHARACTERISTICS = dict([(e[1], e[0]) for e in section_characteristics] + section_characteristics)
 
 
 debug_types = [
@@ -282,8 +300,7 @@ relocation_types = [
     ('IMAGE_REL_BASED_DIR64',           10),
     ('IMAGE_REL_BASED_HIGH3ADJ',        11) ]
 
-RELOCATION_TYPE = dict(
-    [(e[1], e[0]) for e in relocation_types]+relocation_types)
+RELOCATION_TYPE = dict([(e[1], e[0]) for e in relocation_types]+relocation_types)
 
 
 dll_characteristics = [
@@ -1477,6 +1494,13 @@ class PE(object):
     whole PE structure. The "full_load" method can be used to parse
     the missing data at a later stage.
 
+    The "skip_counter" is enable by default. It will prevent the parser from
+    counting the bytes of the mapped PE file. For 5MB+ PE files, this will speed up the 
+    loading time without losing any functionality.
+
+    The "use_ordlookup" is disabled by default. This will make the pefile module less dependent on
+    additional external modules.
+
     Basic headers information will be available in the attributes:
 
     DOS_HEADER
@@ -1526,13 +1550,15 @@ class PE(object):
     # Format specifications for PE structures.
     #
 
-    __IMAGE_DOS_HEADER_format__ = ('IMAGE_DOS_HEADER',
-        ('H,e_magic', 'H,e_cblp', 'H,e_cp',
-        'H,e_crlc', 'H,e_cparhdr', 'H,e_minalloc',
-        'H,e_maxalloc', 'H,e_ss', 'H,e_sp', 'H,e_csum',
-        'H,e_ip', 'H,e_cs', 'H,e_lfarlc', 'H,e_ovno', '8s,e_res',
-        'H,e_oemid', 'H,e_oeminfo', '20s,e_res2',
-        'I,e_lfanew'))
+    __IMAGE_DOS_HEADER_format__ = (
+        'IMAGE_DOS_HEADER',
+            ('H,e_magic', 'H,e_cblp', 'H,e_cp',
+            'H,e_crlc', 'H,e_cparhdr', 'H,e_minalloc',
+            'H,e_maxalloc', 'H,e_ss', 'H,e_sp', 'H,e_csum',
+            'H,e_ip', 'H,e_cs', 'H,e_lfarlc', 'H,e_ovno', '8s,e_res',
+            'H,e_oemid', 'H,e_oeminfo', '20s,e_res2',
+            'I,e_lfanew')
+    )
 
     __IMAGE_FILE_HEADER_format__ = ('IMAGE_FILE_HEADER',
         ('H,Machine', 'H,NumberOfSections',
@@ -1717,15 +1743,21 @@ class PE(object):
     __IMAGE_BOUND_FORWARDER_REF_format__ = ('IMAGE_BOUND_FORWARDER_REF',
         ('I,TimeDateStamp', 'H,OffsetModuleName', 'H,Reserved') )
 
-    def __init__(self, name=None, data=None, fast_load=None):
+
+    def __init__(self, name=None, data=None, 
+                 fast_load=None, skip_counter=True, use_ordlookup=False):
 
         self.sections = []
 
         self.__warnings = []
 
+        self.use_ordlookup = use_ordlookup
+        if use_ordlookup:
+            import ordlookup
+
         self.PE_TYPE = None
 
-        if  not name and not data:
+        if not name and not data:
             return
 
         # This list will keep track of all the structures created.
@@ -1736,8 +1768,21 @@ class PE(object):
 
         if fast_load is None:
             fast_load = globals()['fast_load']
+
+        # Set up the image directory parsers callback table
+        self.directory_parsing = (
+            (IMAGE_DIRECTORY_ENTRY_IMPORT,        self.parse_import_directory),
+            (IMAGE_DIRECTORY_ENTRY_EXPORT,        self.parse_export_directory),
+            (IMAGE_DIRECTORY_ENTRY_RESOURCE,      self.parse_resources_directory),
+            (IMAGE_DIRECTORY_ENTRY_DEBUG,         self.parse_debug_directory),
+            (IMAGE_DIRECTORY_ENTRY_BASERELOC,     self.parse_relocations_directory),
+            (IMAGE_DIRECTORY_ENTRY_TLS,           self.parse_directory_tls),
+            (IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG,   self.parse_directory_load_config),
+            (IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT,  self.parse_delay_import_directory),
+            (IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT,  self.parse_directory_bound_imports) )
+
         try:
-            self.__parse__(name, data, fast_load)
+            self.__parse__(name, data, fast_load, skip_counter)
         except:
             self.close()
             raise
@@ -1772,7 +1817,7 @@ class PE(object):
         return structure
 
 
-    def __parse__(self, fname, data, fast_load):
+    def __parse__(self, fname, data, fast_load, skip_counter):
         """Parse a Portable Executable file.
 
         Loads a PE file, parsing all its structures and making them available
@@ -1806,17 +1851,19 @@ class PE(object):
             self.__data__ = data
             self.__from_file = False
 
-        for byte, byte_count in Counter(bytearray(self.__data__)).items():
-            # Only report the cases where a byte makes up for more than 50% (if
-            # zero) or 15% (if non-zero) of the file's contents. There are
-            # legitimate PEs where 0x00 bytes are close to 50% of the whole
-            # file's contents.
-            if (byte == 0 and 1.0 * byte_count / len(self.__data__) > 0.5) or (
-                byte != 0 and 1.0 * byte_count / len(self.__data__) > 0.15):
-                self.__warnings.append(
-                    ("Byte 0x{0:02x} makes up {1:.4f}% of the file's contents."
-                    " This may indicate truncation / malformation.").format(
-                        byte, 100.0 * byte_count / len(self.__data__)))
+        if not skip_counter:
+            from collections import Counter
+            for byte, byte_count in Counter(bytearray(self.__data__)).items():
+                # Only report the cases where a byte makes up for more than 50% (if
+                # zero) or 15% (if non-zero) of the file's contents. There are
+                # legitimate PEs where 0x00 bytes are close to 50% of the whole
+                # file's contents.
+                if (byte == 0 and 1.0 * byte_count / len(self.__data__) > 0.5) or (
+                    byte != 0 and 1.0 * byte_count / len(self.__data__) > 0.15):
+                    self.__warnings.append(
+                        ("Byte 0x{0:02x} makes up {1:.4f}% of the file's contents."
+                        " This may indicate truncation / malformation.").format(
+                            byte, 100.0 * byte_count / len(self.__data__)))
 
 
         dos_header_data = self.__data__[:64]
@@ -1832,9 +1879,7 @@ class PE(object):
         if not self.DOS_HEADER or self.DOS_HEADER.e_magic != IMAGE_DOS_SIGNATURE:
             raise PEFormatError('DOS Header magic not found.')
 
-        # OC Patch:
         # Check for sane value in e_lfanew
-        #
         if self.DOS_HEADER.e_lfanew > len(self.__data__):
             raise PEFormatError('Invalid e_lfanew value, probably not a PE file')
 
@@ -1846,9 +1891,8 @@ class PE(object):
             file_offset = nt_headers_offset)
 
         # We better check the signature right here, before the file screws
-        # around with sections:
-        # OC Patch:
-        # Some malware will cause the Signature value to not exist at all
+        # around with sections.
+        # Note: some malware will cause the Signature value to not exist at all
         if not self.NT_HEADERS or not self.NT_HEADERS.Signature:
             raise PEFormatError('NT Headers not found.')
 
@@ -1958,10 +2002,7 @@ class PE(object):
         if not self.FILE_HEADER:
             raise PEFormatError('File Header missing')
 
-
-        # OC Patch:
         # Die gracefully if there is no OPTIONAL_HEADER field
-        # 975440f5ad5e2e4a92c4d9a5f22f75c1
         if self.OPTIONAL_HEADER is None:
             raise PEFormatError("No Optional Header found, invalid PE32 or PE32+ file.")
         if self.PE_TYPE is None:
@@ -2010,7 +2051,7 @@ class PE(object):
             if len(self.__data__) - offset < 8:
                 data = self.__data__[offset:] + b'\0'*8
             else:
-                data = self.__data__[offset:offset+MAX_ASSUMED_VALID_NUMBER_OF_RVA_AND_SIZES]
+                data = self.__data__[offset:offset + MAX_ASSUMED_VALID_NUMBER_OF_RVA_AND_SIZES]
 
             dir_entry = self.__unpack_data__(
                 self.__IMAGE_DATA_DIRECTORY_format__,
@@ -2098,6 +2139,7 @@ class PE(object):
 
             class RichHeader(object):
                 pass
+
             rich_header = self.parse_rich_header()
             if rich_header:
                 self.RICH_HEADER = RichHeader()
@@ -2366,7 +2408,8 @@ class PE(object):
 
 
 
-    def parse_data_directories(self, directories=None,
+    def parse_data_directories(self, 
+                               directories=None,
                                forwarded_exports_only=False,
                                import_dllnames_only=False):
         """Parse and process the PE file's data directories.
@@ -2397,26 +2440,12 @@ class PE(object):
         attribute will not have a `symbols` attribute.
         """
 
-        directory_parsing = (
-            ('IMAGE_DIRECTORY_ENTRY_IMPORT', self.parse_import_directory),
-            ('IMAGE_DIRECTORY_ENTRY_EXPORT', self.parse_export_directory),
-            ('IMAGE_DIRECTORY_ENTRY_RESOURCE', self.parse_resources_directory),
-            ('IMAGE_DIRECTORY_ENTRY_DEBUG', self.parse_debug_directory),
-            ('IMAGE_DIRECTORY_ENTRY_BASERELOC', self.parse_relocations_directory),
-            ('IMAGE_DIRECTORY_ENTRY_TLS', self.parse_directory_tls),
-            ('IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG', self.parse_directory_load_config),
-            ('IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT', self.parse_delay_import_directory),
-            ('IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT', self.parse_directory_bound_imports) )
-
         if directories is not None:
             if not isinstance(directories, (tuple, list)):
                 directories = [directories]
 
-        for entry in directory_parsing:
-            # OC Patch:
-            #
+        for directory_index, directory_parser in self.directory_parsing:
             try:
-                directory_index = DIRECTORY_ENTRY[entry[0]]
                 dir_entry = self.OPTIONAL_HEADER.DATA_DIRECTORY[directory_index]
             except IndexError:
                 break
@@ -2424,18 +2453,29 @@ class PE(object):
             # Only process all the directories if no individual ones have
             # been chosen
             #
-            if directories is None or directory_index in directories:
+            if (directories is None) or (directory_index in directories):
 
                 if dir_entry.VirtualAddress:
-                    if forwarded_exports_only and entry[0] == 'IMAGE_DIRECTORY_ENTRY_EXPORT':
-                        value = entry[1](dir_entry.VirtualAddress, dir_entry.Size, forwarded_only=True)
-                    elif import_dllnames_only and entry[0] == 'IMAGE_DIRECTORY_ENTRY_IMPORT':
-                        value = entry[1](dir_entry.VirtualAddress, dir_entry.Size, dllnames_only=True)
+                    if forwarded_exports_only and directory_index == IMAGE_DIRECTORY_ENTRY_EXPORT:
+                        value = directory_parser(
+                                        dir_entry.VirtualAddress, 
+                                        dir_entry.Size, forwarded_only=True)
+
+                    elif import_dllnames_only and directory_index == IMAGE_DIRECTORY_ENTRY_IMPORT:
+                        value = directory_parser(
+                                    dir_entry.VirtualAddress, 
+                                    dir_entry.Size, 
+                                    dllnames_only=True)
 
                     else:
-                        value = entry[1](dir_entry.VirtualAddress, dir_entry.Size)
+                        value = directory_parser(dir_entry.VirtualAddress, dir_entry.Size)
+
+                    # If the directory has been parsed successfully, then
+                    # patch-in a new or updated DIRECTORY_xxxx attributes into the class
+                    # so other dumping functions can pick it up and use it
                     if value:
-                        setattr(self, entry[0][6:], value)
+                        # Attribute name is: the directory name string from its index, past the "IMAGE_" prefix.
+                        setattr(self, DIRECTORY_ENTRY[directory_index][6:], value)
 
             if (directories is not None) and isinstance(directories, list) and (entry[0] in directories):
                 directories.remove(directory_index)
@@ -2553,7 +2593,9 @@ class PE(object):
 
 
     def parse_directory_tls(self, rva, size):
-        """"""
+        """
+        Parse the Thread Local Storage directory
+        """
 
         # By default let's pretend the format is a 32-bit PE. It may help
         # produce some output for files where the Magic in the Optional Header
@@ -2570,8 +2612,7 @@ class PE(object):
                 file_offset = self.get_offset_from_rva(rva))
         except PEFormatError:
             self.__warnings.append(
-                'Invalid TLS information. Can\'t read '
-                'data at RVA: 0x%x' % rva)
+                "Invalid TLS information. Can't read data at RVA: 0x%x" % rva)
             tls_struct = None
 
         if not tls_struct:
@@ -2596,8 +2637,8 @@ class PE(object):
                 file_offset = self.get_offset_from_rva(rva))
         except PEFormatError:
             self.__warnings.append(
-                'Invalid LOAD_CONFIG information. Can\'t read '
-                'data at RVA: 0x%x' % rva)
+                "Invalid LOAD_CONFIG information. Can't read data at RVA: 0x%x" % rva)
+
             load_config_struct = None
 
         if not load_config_struct:
@@ -2636,8 +2677,7 @@ class PE(object):
             # rlc.VirtualAddress must lie within the Image
             if rlc.VirtualAddress > self.OPTIONAL_HEADER.SizeOfImage:
                 self.__warnings.append(
-                    'Invalid relocation information. VirtualAddress outside'
-                    ' of Image: 0x%x' % rlc.VirtualAddress)
+                    "Invalid relocation information. VirtualAddress outside of Image: 0x%x" % rlc.VirtualAddress)
                 break
 
             # rlc.SizeOfBlock must be less or equal than the size of the image
@@ -3704,7 +3744,7 @@ class PE(object):
 
             if dll:
                 for symbol in import_data:
-                    if symbol.name is None:
+                    if symbol.name is None and self.use_ordlookup:
                         funcname = ordlookup.ordLookup(dll.lower(), symbol.ordinal)
                         if funcname:
                             symbol.name = funcname
@@ -3722,18 +3762,20 @@ class PE(object):
         exts = ['ocx', 'sys', 'dll']
         if not hasattr(self, "DIRECTORY_ENTRY_IMPORT"):
             return ""
+
         for entry in self.DIRECTORY_ENTRY_IMPORT:
             if isinstance(entry.dll, bytes):
                 libname = entry.dll.decode().lower()
             else:
                 libname = entry.dll.lower()
+
             parts = libname.rsplit('.', 1)
             if len(parts) > 1 and parts[1] in exts:
                 libname = parts[0]
 
             for imp in entry.imports:
                 funcname = None
-                if not imp.name:
+                if not imp.name and self.use_ordlookup:
                     funcname = ordlookup.ordLookup(entry.dll.lower(), imp.ordinal, make_name=True)
                     if not funcname:
                         raise Exception("Unable to look up ordinal %s:%04x" % (entry.dll, imp.ordinal))
@@ -3745,6 +3787,7 @@ class PE(object):
 
                 if isinstance(funcname, bytes):
                     funcname = funcname.decode()
+
                 impstrs.append('%s.%s' % (libname.lower(),funcname.lower()))
 
         return md5( ','.join( impstrs ).encode() ).hexdigest()
@@ -3788,10 +3831,10 @@ class PE(object):
             if not dllnames_only:
                 try:
                     import_data =  self.parse_imports(
-                        import_desc.OriginalFirstThunk,
-                        import_desc.FirstThunk,
-                        import_desc.ForwarderChain,
-                        max_length = max_len)
+                                            import_desc.OriginalFirstThunk,
+                                            import_desc.FirstThunk,
+                                            import_desc.ForwarderChain,
+                                            max_length = max_len)
                 except PEFormatError as e:
                     self.__warnings.append(
                         'Error parsing the import directory. '
@@ -3815,7 +3858,7 @@ class PE(object):
 
             if dll:
                 for symbol in import_data:
-                    if symbol.name is None:
+                    if symbol.name is None and self.use_ordlookup:
                         funcname = ordlookup.ordLookup(dll.lower(), symbol.ordinal)
                         if funcname:
                             symbol.name = funcname
