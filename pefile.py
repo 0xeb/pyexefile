@@ -1734,7 +1734,7 @@ class PE(object):
         self.__structures__ = []
         self.__from_file = None
 
-        if not fast_load:
+        if fast_load is None:
             fast_load = globals()['fast_load']
         try:
             self.__parse__(name, data, fast_load)
