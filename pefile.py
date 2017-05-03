@@ -32,8 +32,6 @@ History
            - Added is_pe_plus_type() and is_pe_type()
            - Added ImageBase()
            - Added get_ptr_at_rva() to retrieve a pointer at a given RVA (with automatic size detection)
-
-
 """
 
 from __future__ import division
@@ -5690,7 +5688,7 @@ class PE(object):
             return section_alignment * ( int(val / section_alignment) )
         return val
 
-
+# --------------------------------------------------------------------------------------------------------------------
 if __name__ == '__main__':
     import sys
     if not sys.argv[1:]:

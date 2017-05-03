@@ -27,8 +27,6 @@ __version__ = pefile.__version__
 __contact__ = 'ero.carrera@gmail.com'
 
 
-
-
 class SignatureDatabase(object):
     """This class loads and keeps a parsed PEiD signature database.
 
