@@ -24,6 +24,7 @@ History
 05/03/2017 - Exposed IMAGE_DIRECTORY_ENTRY_* numerical constants
            - Lookup function names by ordinal is now an optional argument to the PE constructor
 		   - Counting the bytes in the mapped file is now optional
+           - Added PE.has_imports(), PE.has_resources()
            - Moved various local tables/lookups/dicts/sets initialization to PE._setup_tables()
 
 """
