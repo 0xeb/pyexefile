@@ -32,6 +32,7 @@ History
            - Added is_pe_plus_type() and is_pe_type()
            - Added ImageBase()
            - Added get_ptr_at_rva() to retrieve a pointer at a given RVA (with automatic size detection)
+05/05/2017 - Added context management helper method to the PE class. Use: "with PE.open(...) as pe"
 """
 
 from __future__ import division
@@ -1479,7 +1480,24 @@ def is_valid_function_name(s):
     return True
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# Context management class
+class _open_pe_ctxman(object):
+    def __init__(self, *args, **kwargs):
+        self.pe = None
+        self.args = args
+        self.kwargs = kwargs
 
+    def __enter__(self):
+        self.pe = PE(*self.args, **self.kwargs)
+        return self.pe
+
+    def __exit__(self, type, value, traceback):
+        if self.pe is not None:
+            self.pe.close()
+
+
+# --------------------------------------------------------------------------------------------------------------------
 class PE(object):
     """A Portable Executable representation.
 
@@ -1754,6 +1772,11 @@ class PE(object):
         ('I,TimeDateStamp', 'H,OffsetModuleName', 'H,Reserved') )
 
 
+    @staticmethod
+    def open(*args, **kwargs):
+        return _open_pe_ctxman(*args, **kwargs)
+
+
     def __init__(self, name=None, data=None, 
                  fast_load=None, skip_counter=True, use_ordlookup=False):
 
@@ -1795,8 +1818,8 @@ class PE(object):
 
         # Set up the image directory parsers callback table
         self.directory_parsing = (
-            (IMAGE_DIRECTORY_ENTRY_IMPORT,        self.parse_import_directory),
             (IMAGE_DIRECTORY_ENTRY_EXPORT,        self.parse_export_directory),
+            (IMAGE_DIRECTORY_ENTRY_IMPORT,        self.parse_import_directory),
             (IMAGE_DIRECTORY_ENTRY_RESOURCE,      self.parse_resources_directory),
             (IMAGE_DIRECTORY_ENTRY_DEBUG,         self.parse_debug_directory),
             (IMAGE_DIRECTORY_ENTRY_BASERELOC,     self.parse_relocations_directory),
@@ -2309,9 +2332,6 @@ class PE(object):
         f.close()
         return
 
-
-
-
     def parse_sections(self, offset):
         """Fetch the PE file sections.
 
@@ -2517,6 +2537,9 @@ class PE(object):
         if directories is not None:
             if not isinstance(directories, (tuple, list)):
                 directories = [directories]
+        else:
+            # Parse all supported directories
+            directories = [x[0] for x in self.directory_parsing]
 
         for directory_index, directory_parser in self.directory_parsing:
             try:
@@ -5686,7 +5709,9 @@ class PE(object):
 
         if section_alignment and val % section_alignment:
             return section_alignment * ( int(val / section_alignment) )
+
         return val
+
 
 # --------------------------------------------------------------------------------------------------------------------
 if __name__ == '__main__':
