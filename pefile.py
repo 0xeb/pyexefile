@@ -33,11 +33,12 @@ History
            - Added ImageBase()
            - Added get_ptr_at_rva() to retrieve a pointer at a given RVA (with automatic size detection)
 05/05/2017 - Added context management helper method to the PE class. Use: "with PE.open(...) as pe"
+01/17/2019 - Script was broken under Python 3.6
+
 """
 
 from __future__ import division
 from __future__ import print_function
-from past.builtins import cmp, long
 from builtins import bytes
 from builtins import chr
 from builtins import object
@@ -63,6 +64,9 @@ from hashlib import sha512
 from hashlib import md5
 
 PY3 = sys.version_info > (3,)
+
+if not PY3:
+    from past.builtins import cmp, long
 
 # Compute printable bytes lookup table
 _printable_bytes = [ord(i) for i in string.printable if i not in string.whitespace]
@@ -139,7 +143,7 @@ directory_entry_types = [
     ('IMAGE_DIRECTORY_ENTRY_IAT',           IMAGE_DIRECTORY_ENTRY_IAT),
     ('IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT',  IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT),
     ('IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR',IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR),
-    ('IMAGE_DIRECTORY_ENTRY_RESERVED',      15) 
+    ('IMAGE_DIRECTORY_ENTRY_RESERVED',      15)
 ]
 
 DIRECTORY_ENTRY = dict([(e[1], e[0]) for e in directory_entry_types] + directory_entry_types)
@@ -1523,7 +1527,7 @@ class PE(object):
     the missing data at a later stage.
 
     The "skip_counter" is enable by default. It will prevent the parser from
-    counting the bytes of the mapped PE file. For 5MB+ PE files, this will speed up the 
+    counting the bytes of the mapped PE file. For 5MB+ PE files, this will speed up the
     loading time without losing any functionality.
 
     The "use_ordlookup" is disabled by default. This will make the pefile module less dependent on
@@ -1777,7 +1781,7 @@ class PE(object):
         return _open_pe_ctxman(*args, **kwargs)
 
 
-    def __init__(self, name=None, data=None, 
+    def __init__(self, name=None, data=None,
                  fast_load=None, skip_counter=True, use_ordlookup=False):
 
         self.sections = []
@@ -2452,7 +2456,7 @@ class PE(object):
         """
         directories = [IMAGE_DIRECTORY_ENTRY_EXPORT]
         self.parse_data_directories(
-                directories = directories, 
+                directories = directories,
                 forwarded_exports_only=forwarded_exports_only)
 
         return len(directories) == 0
@@ -2468,7 +2472,7 @@ class PE(object):
         if len(directories) != 0 or (self.DIRECTORY_ENTRY_TLS.struct.AddressOfCallBacks == 0):
             return None
 
-       
+
         cb_rva = self.DIRECTORY_ENTRY_TLS.struct.AddressOfCallBacks - self.ImageBase()
         step = 8 if self.is_pe_plus_type() else 4
 
@@ -2502,7 +2506,7 @@ class PE(object):
         return len(directories) == 0
 
 
-    def parse_data_directories(self, 
+    def parse_data_directories(self,
                                directories=None,
                                forwarded_exports_only=False,
                                import_dllnames_only=False):
@@ -2556,13 +2560,13 @@ class PE(object):
                 if dir_entry.VirtualAddress:
                     if forwarded_exports_only and directory_index == IMAGE_DIRECTORY_ENTRY_EXPORT:
                         value = directory_parser(
-                                        dir_entry.VirtualAddress, 
+                                        dir_entry.VirtualAddress,
                                         dir_entry.Size, forwarded_only=True)
 
                     elif import_dllnames_only and directory_index == IMAGE_DIRECTORY_ENTRY_IMPORT:
                         value = directory_parser(
-                                    dir_entry.VirtualAddress, 
-                                    dir_entry.Size, 
+                                    dir_entry.VirtualAddress,
+                                    dir_entry.Size,
                                     dllnames_only=True)
 
                     else:
@@ -2601,7 +2605,7 @@ class PE(object):
                 # still have a valid PE file
 
                 self.__warnings.append(
-                    'The Bound Imports directory exists but can\'t be parsed.')
+                    "The Bound Imports directory exists but can't be parsed.")
 
                 return
 
@@ -2691,11 +2695,11 @@ class PE(object):
 
         return bound_imports
 
-    
+
     def is_pe_plus_type(self):
         return self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE_PLUS
 
-    
+
     def is_pe_type(self):
         return self.PE_TYPE == OPTIONAL_HEADER_MAGIC_PE
 
@@ -3867,7 +3871,7 @@ class PE(object):
     def get_imphash(self):
         impstrs = []
         exts = ['ocx', 'sys', 'dll']
-        if not hasattr(self, "DIRECTORY_ENTRY_IMPORT"):
+        if not self.has_imports():
             return ""
 
         for entry in self.DIRECTORY_ENTRY_IMPORT:
@@ -4425,7 +4429,7 @@ class PE(object):
             if rva < len(self.__data__):
                 return rva
 
-            raise PEFormatError('data at RVA can\'t be fetched. Corrupt header?')
+            raise PEFormatError("data at RVA can't be fetched. Corrupt header?")
 
         return s.get_offset_from_rva(rva)
 
@@ -4439,6 +4443,7 @@ class PE(object):
         s = self.get_section_by_rva(rva)
         if not s:
             return self.get_string_from_data(0, self.__data__[rva:rva+max_length])
+
         return self.get_string_from_data(0, s.get_data(rva, length=max_length))
 
     def get_bytes_from_data(self, offset, data):
@@ -4532,7 +4537,7 @@ class PE(object):
         """Checks if the PE file has an import directory and it was parsed"""
         return hasattr(self, 'DIRECTORY_ENTRY_IMPORT')
 
-    
+
     def has_resources(self):
         return hasattr(self, 'DIRECTORY_ENTRY_RESOURCE')
 

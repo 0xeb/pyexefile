@@ -64,3 +64,29 @@ The following links provide detailed information about the PE format and its str
   * [The Portable Executable File Format](http://www.csn.ul.ie/~caolan/publink/winresdump/winresdump/doc/pefile.html)
   * [Get icons from Exe or DLL the PE way](http://www.codeproject.com/cpp/GetIconsfromExeorDLLs.asp)
   * Solar Eclipse's Tiny PE page at "http://www.phreedom.org/solar/code/tinype/" is no longer available, corkami has a copy of TinyPE [here](https://code.google.com/p/corkami/source/browse/trunk/misc/MakePE/examples/PE/tinype.asm?r=179)
+
+# MachO file
+
+[`macho_parser`]("https://github.com/penvirus/macho_parser") originally written by `Tzung-Bi Shih` (penvirus@gmail.com) is a simple macho parser.
+
+
+Simple example:
+```
+
+def test_dump_info(fn, segs = True, secs = True):
+    with MachO(fn) as m:
+        if segs:
+            print()
+            print("Dumping segments:")
+            print("-----------------")
+            for x in m.get_segments():
+                print(m.as_string(x.segname))
+
+        if secs:
+            print()
+            print("Dumping sections:")
+            print("-----------------")
+            for x in m.get_sections():
+                print("Segment: %30s Section: %30s" % (
+                    m.as_string(x.segname), m.as_string(x.sectname)))
+```
