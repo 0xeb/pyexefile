@@ -4329,6 +4329,10 @@ class PE(object):
         return mapped_data
 
 
+    def export_symbols(self):
+        return self.DIRECTORY_ENTRY_EXPORT.symbols
+
+
     def get_resources_strings(self):
         """Returns a list of all the strings found withing the resources (if any).
 
@@ -4532,6 +4536,9 @@ class PE(object):
     def ImageBase(self):
         return self.OPTIONAL_HEADER.ImageBase
 
+
+    def has_exports(self):
+        return hasattr(self, 'DIRECTORY_ENTRY_EXPORT')
 
     def has_imports(self):
         """Checks if the PE file has an import directory and it was parsed"""
