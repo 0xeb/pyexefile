@@ -1,0 +1,11 @@
+LICENSE
+README.md
+setup.py
+exefile/exetype.py
+exefile/macho_parser.py
+exefile/pefile.py
+exefile/peutils.py
+exefile.egg-info/PKG-INFO
+exefile.egg-info/SOURCES.txt
+exefile.egg-info/dependency_links.txt
+exefile.egg-info/top_level.txt
