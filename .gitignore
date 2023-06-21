@@ -4,3 +4,4 @@
 *.suo
 t1.py
 test1.py
+exefile.egg-info/*

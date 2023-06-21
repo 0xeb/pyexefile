@@ -1,9 +1,0 @@
-Metadata-Version: 2.1
-Name: exefile
-Version: 0.0.1
-Summary: A thin wrapper on top of various executable parsers such as pefile, and others.
-Home-page: 
-Author: Elias Bachaalany
-Author-email: elias.bachaalany@gmail.com
-License: LICENSE
-License-File: LICENSE
